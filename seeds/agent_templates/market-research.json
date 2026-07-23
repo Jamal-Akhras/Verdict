@@ -1,0 +1,31 @@
+{
+  "slug": "market-research",
+  "name": "Market/Competitor Research Agent",
+  "role": "Find competitors, pricing, and demand signals with citations.",
+  "scope": "Read-only web research. No outreach, no accounts, no purchases.",
+  "tools": [
+    "web_search",
+    "web_fetch",
+    "artifact_read"
+  ],
+  "checks": [
+    "Minimum 5 cited sources",
+    "URLs resolve",
+    "No fabricated competitors"
+  ],
+  "output_types": [
+    "competitor_matrix",
+    "market_memo"
+  ],
+  "default_budget_usd": 1.5,
+  "risk_level": "medium",
+  "authority_default": "observe",
+  "approval_requirement": "none",
+  "task_types": [
+    "market_research",
+    "competitor_research"
+  ],
+  "version": 1,
+  "team": "Strategy",
+  "initials": "MR"
+}

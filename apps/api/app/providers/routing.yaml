@@ -1,0 +1,58 @@
+# Routing table: data, not code. Editable without deploys; shown in the UI
+# so users can see why a model was chosen.
+# Candidates are tried in order; ProviderError falls through to the next.
+# prices are USD per 1M tokens.
+
+models:
+  gpt-4o:            { provider: openai,    tier: high,  price_in: 2.50, price_out: 10.00 }
+  gpt-4o-mini:       { provider: openai,    tier: cheap, price_in: 0.15, price_out: 0.60 }
+  claude-sonnet-4-5: { provider: anthropic, tier: high,  price_in: 3.00, price_out: 15.00 }
+  claude-haiku-4-5:  { provider: anthropic, tier: cheap, price_in: 1.00, price_out: 5.00 }
+  gemini-2.0-flash:  { provider: gemini,    tier: cheap, price_in: 0.10, price_out: 0.40 }
+  gemini-2.5-pro:    { provider: gemini,    tier: high,  price_in: 1.25, price_out: 10.00 }
+
+task_types:
+  market_research:
+    - gpt-4o
+    - claude-sonnet-4-5
+    - gemini-2.0-flash
+  roi_model:
+    - gpt-4o-mini
+    - claude-haiku-4-5
+    - gemini-2.0-flash
+  intake_normalization:
+    - gpt-4o-mini
+    - claude-haiku-4-5
+    - gemini-2.0-flash
+  feasibility_scoring:
+    - gpt-4o
+    - claude-sonnet-4-5
+    - gemini-2.5-pro
+  prd_generation:
+    - claude-sonnet-4-5
+    - gpt-4o
+    - gemini-2.0-flash
+  architecture_design:
+    - claude-sonnet-4-5
+    - gpt-4o
+    - gemini-2.5-pro
+  backlog_generation:
+    - claude-sonnet-4-5
+    - gpt-4o
+    - gemini-2.0-flash
+  artifact_review:
+    - gpt-4o
+    - claude-sonnet-4-5
+    - gemini-2.0-flash
+  security_plan_review:
+    - claude-sonnet-4-5
+    - gpt-4o
+    - gemini-2.5-pro
+  summarization:
+    - gpt-4o-mini
+    - claude-haiku-4-5
+    - gemini-2.0-flash
+
+# high-risk tasks may only use high-tier models, regardless of candidate order
+risk_rules:
+  high_requires_tier: high

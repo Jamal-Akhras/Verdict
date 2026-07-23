@@ -1,0 +1,29 @@
+{
+  "slug": "security-review",
+  "name": "Security Review Agent",
+  "role": "Review the plan for auth, data exposure, payment, and compliance risk; produce launch-readiness checklist.",
+  "scope": "Plan-level review in v0 (no code, no scanning). Defensive only.",
+  "tools": [
+    "artifact_read",
+    "risk_taxonomy"
+  ],
+  "checks": [
+    "Every user-data flow assessed",
+    "Severities justified",
+    "Critical findings auto-create approval requests"
+  ],
+  "output_types": [
+    "risk_assessment",
+    "launch_readiness_checklist"
+  ],
+  "default_budget_usd": 1.0,
+  "risk_level": "high",
+  "authority_default": "suggest",
+  "approval_requirement": "critical_finding_blocks_until_founder_resolves",
+  "task_types": [
+    "security_plan_review"
+  ],
+  "version": 1,
+  "team": "Quality",
+  "initials": "SR"
+}

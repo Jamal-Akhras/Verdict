@@ -1,0 +1,27 @@
+{
+  "slug": "qa",
+  "name": "QA Agent",
+  "role": "Adversarial review of other agents' artifacts: contradictions, missing AC, scope creep.",
+  "scope": "Reviews artifacts in 'review' status. Reviews code only in later milestones.",
+  "tools": [
+    "artifact_read",
+    "checklist_runner"
+  ],
+  "checks": [
+    "Findings link to specific artifact sections",
+    "Pass/block recommendation is justified"
+  ],
+  "output_types": [
+    "qa_report"
+  ],
+  "default_budget_usd": 1.0,
+  "risk_level": "low",
+  "authority_default": "suggest",
+  "approval_requirement": "block_recommendation_goes_to_founder",
+  "task_types": [
+    "artifact_review"
+  ],
+  "version": 1,
+  "team": "Quality",
+  "initials": "QA"
+}

@@ -1,0 +1,27 @@
+{
+  "slug": "engineering-planner",
+  "name": "Engineering Planner",
+  "role": "Convert approved PRD + tech plan into a single-responsibility ticket backlog with dependency map.",
+  "scope": "Planning only. Each ticket: objective, non-goals, acceptance criteria, test requirements.",
+  "tools": [
+    "artifact_read"
+  ],
+  "checks": [
+    "Every ticket has objective/non-goals/AC/test requirements",
+    "Dependency graph has no cycles"
+  ],
+  "output_types": [
+    "task_backlog",
+    "dependency_map"
+  ],
+  "default_budget_usd": 1.5,
+  "risk_level": "low",
+  "authority_default": "suggest",
+  "approval_requirement": "backlog_requires_founder_approval",
+  "task_types": [
+    "backlog_generation"
+  ],
+  "version": 1,
+  "team": "Engineering",
+  "initials": "EP"
+}

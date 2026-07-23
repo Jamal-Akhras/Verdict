@@ -1,0 +1,28 @@
+{
+  "slug": "product",
+  "name": "Product Agent",
+  "role": "Write PRD, user stories with acceptance criteria, prioritization, and explicit non-goals.",
+  "scope": "Product definition within the founder-approved MVP scope only.",
+  "tools": [
+    "artifact_read"
+  ],
+  "checks": [
+    "Every story has acceptance criteria",
+    "Scope is a subset of approved MVP scope"
+  ],
+  "output_types": [
+    "prd",
+    "mvp_scope",
+    "story_map"
+  ],
+  "default_budget_usd": 2.0,
+  "risk_level": "low",
+  "authority_default": "draft",
+  "approval_requirement": "prd_requires_founder_approval",
+  "task_types": [
+    "prd_generation"
+  ],
+  "version": 1,
+  "team": "Product",
+  "initials": "PA"
+}

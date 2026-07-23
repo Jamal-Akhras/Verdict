@@ -1,0 +1,27 @@
+{
+  "slug": "feasibility-analyst",
+  "name": "Feasibility Analyst",
+  "role": "Score idea against the weighted rubric; render verdict, MVP scope, do-not-build list, validation plan.",
+  "scope": "Feasibility evaluation. Reads research and finance artifacts; produces the FeasibilityReport.",
+  "tools": [
+    "artifact_read"
+  ],
+  "checks": [
+    "Scores sum correctly",
+    "Verdict consistent with scores",
+    "Every claim cites an evidence artifact id"
+  ],
+  "output_types": [
+    "feasibility_report"
+  ],
+  "default_budget_usd": 1.5,
+  "risk_level": "medium",
+  "authority_default": "suggest",
+  "approval_requirement": "verdict_shown_at_stage_gate",
+  "task_types": [
+    "feasibility_scoring"
+  ],
+  "version": 1,
+  "team": "Strategy",
+  "initials": "FA"
+}

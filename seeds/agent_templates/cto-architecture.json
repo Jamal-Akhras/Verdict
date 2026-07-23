@@ -1,0 +1,28 @@
+{
+  "slug": "cto-architecture",
+  "name": "CTO/Architecture Agent",
+  "role": "Choose stack with justification, design architecture, data model, API contract; write ADRs.",
+  "scope": "Technical planning. No code generation in v0.",
+  "tools": [
+    "artifact_read"
+  ],
+  "checks": [
+    "Stack justified against alternatives",
+    "Security-sensitive components flagged for Security Review"
+  ],
+  "output_types": [
+    "tech_plan",
+    "adr",
+    "api_contract"
+  ],
+  "default_budget_usd": 2.0,
+  "risk_level": "medium",
+  "authority_default": "draft",
+  "approval_requirement": "tech_plan_requires_founder_approval",
+  "task_types": [
+    "architecture_design"
+  ],
+  "version": 1,
+  "team": "Engineering",
+  "initials": "CT"
+}

@@ -1,0 +1,17 @@
+node_modules/
+.next/
+__pycache__/
+*.pyc
+.venv/
+.env
+.env.local
+dist/
+.pytest_cache/
+.ruff_cache/
+*.sqlite3
+
+# internal business docs - keep local
+docs/LAUNCH.md
+docs/LEGAL_CHECKLIST.md
+docs/PRODUCT_REVIEW_2026-07.md
+*.log

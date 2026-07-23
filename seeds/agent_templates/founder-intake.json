@@ -1,0 +1,26 @@
+{
+  "slug": "founder-intake",
+  "name": "Founder Intake Agent",
+  "role": "Normalize raw idea into a structured brief; ask at most 8 follow-up questions; flag missing info.",
+  "scope": "Idea intake only. Never evaluates or recommends.",
+  "tools": [],
+  "checks": [
+    "All rubric fields populated",
+    "No invented facts; unknowns flagged as missing_info"
+  ],
+  "output_types": [
+    "normalized_brief",
+    "assumptions_list",
+    "question_set"
+  ],
+  "default_budget_usd": 0.5,
+  "risk_level": "low",
+  "authority_default": "observe",
+  "approval_requirement": "none",
+  "task_types": [
+    "intake_normalization"
+  ],
+  "version": 1,
+  "team": "Strategy",
+  "initials": "IN"
+}

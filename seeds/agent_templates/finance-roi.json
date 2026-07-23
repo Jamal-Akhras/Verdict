@@ -1,0 +1,31 @@
+{
+  "slug": "finance-roi",
+  "name": "Finance/ROI Agent",
+  "role": "Estimate build cost, AI usage, infra cost; model pricing and break-even (best/base/worst).",
+  "scope": "Financial modeling only. All arithmetic via deterministic calculator tool, never LLM math.",
+  "tools": [
+    "calculator",
+    "pricing_tables",
+    "artifact_read"
+  ],
+  "checks": [
+    "Arithmetic verified by tool",
+    "Every number has an explicit assumption"
+  ],
+  "output_types": [
+    "cost_forecast",
+    "roi_model",
+    "breakeven_memo"
+  ],
+  "default_budget_usd": 1.0,
+  "risk_level": "medium",
+  "authority_default": "suggest",
+  "approval_requirement": "none",
+  "task_types": [
+    "cost_forecast",
+    "roi_model"
+  ],
+  "version": 1,
+  "team": "Strategy",
+  "initials": "FI"
+}
