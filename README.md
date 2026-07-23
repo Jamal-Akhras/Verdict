@@ -1,6 +1,14 @@
 # Verdict
 
+[![ci](https://github.com/Jamal-Akhras/Verdict/actions/workflows/ci.yml/badge.svg)](https://github.com/Jamal-Akhras/Verdict/actions/workflows/ci.yml)
+
 A multi-agent orchestration platform built on one rule: **agents propose, humans govern.** Agent teams execute as a dependency DAG under human approval gates, per-agent budgets, and an append-only audit trail. Packaged as a product: an AI CTO that assesses whether a software idea is worth building, then hands your AI coding tools an exact, reviewed plan to build it.
+
+![Verdict command center: agent teams by department, each with its model and per-agent budget, and an approval inbox where nothing spends or proceeds without you](docs/images/command-center.png)
+
+The command center: agent teams grouped by function, each running under its own model and budget, with an approval inbox on the right. High-risk steps wait on the desk until the founder decides, and every action is auditable.
+
+![The agent dependency graph: the founder at the root, branching into department teams](docs/images/agent-tree.png)
 
 ## Architecture
 
