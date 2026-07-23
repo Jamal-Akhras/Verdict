@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.db.session import get_db
 from app.models.agents import Agent, AgentStatus
 from app.models.ai import CostEvent
-from app.models.core import Project, User
+from app.models.core import User
 from app.schemas.agent import AgentOut, StageIn
 from app.services.agent_lifecycle import InvalidTransition, transition
 from app.services.auth import current_user, owned, owned_project

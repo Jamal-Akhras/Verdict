@@ -1,7 +1,5 @@
 """Web search tool: provider parsing, fallback, honest degradation, and
 injection into the research prompt."""
-import pytest
-
 from app.config import settings
 from app.tools import web_search
 

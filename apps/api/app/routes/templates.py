@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db
 from app.models.agents import Agent, AgentStatus, AgentTemplate, Authority
-from app.models.core import ActorType, Project, User
+from app.models.core import ActorType, User
 from app.routes.agents import _with_costs
 from app.schemas.agent import AgentOut
 from app.services.audit import record_event
@@ -66,7 +66,7 @@ def staff_from_template(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> AgentOut:
-    project = owned_project(db, user, project_id)
+    owned_project(db, user, project_id)
     load_seed_templates(db)
     template = db.scalar(
         select(AgentTemplate)
@@ -117,7 +117,7 @@ def create_custom_agent(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> AgentOut:
-    project = owned_project(db, user, project_id)
+    owned_project(db, user, project_id)
     # Governance: user-created agents may not exceed Suggest authority.
     authority = body.authority if body.authority != Authority.draft else Authority.suggest
     slug = f"custom-{uuid.uuid4().hex[:8]}"

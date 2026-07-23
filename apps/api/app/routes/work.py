@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db, get_session_factory
-from app.models.core import ActorType, AuditEvent, Project, User
+from app.models.core import ActorType, AuditEvent, User
 from app.models.work import Artifact, Task, TaskStatus
 from app.providers.router import ModelRouter, get_router
 from app.schemas.work import ArtifactOut, AuditEventOut, TaskOut

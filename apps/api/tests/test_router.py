@@ -1,5 +1,3 @@
-import json
-
 import pytest
 from pydantic import BaseModel
 from sqlalchemy import select
