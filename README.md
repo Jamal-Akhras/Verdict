@@ -15,7 +15,9 @@ The command center: agent teams grouped by function, each running under its own 
 - **Task orchestrator** — dependency-DAG execution with failure isolation and per-agent budget enforcement; runs orphaned by process restarts are recovered rather than lost.
 - **Approval gates** — the PRD and tech plan pause the run until the founder approves; a denial cancels downstream work. A QA agent reviews the PRD and a Security Review agent audits the tech plan, with high/critical findings raising acknowledgement requests.
 - **Model router** — task-, risk- and cost-aware routing across OpenAI, Anthropic and Gemini with fallback, pre-spend estimation, and write-ahead CostEvent/ModelCall logging: every model call is recorded before it happens.
+- **Supervision hierarchy** — any agent can be pinned to a model profile (API, subscription via the Claude Code / Codex CLIs, or a local OpenAI-compatible server such as Ollama) and placed under a supervisor. Workers draft on local models at $0; frontier supervisors accept, send back with feedback, or escalate. Escalations climb the chain and reach the founder only when nobody above can settle them. See `docs/adr/0002-supervision-hierarchy.md`.
 - **Audit** — append-only audit and cost ledgers, full artifact provenance, per-agent and per-model spend, an activity timeline with filters and CSV export, and 80% budget warnings.
+- **Trace** — every prompt and response, tagged by task and role (draft / review / escalation), every supervisor review with the exact draft it judged, and every escalation hop, at `/projects/{id}/trace`.
 
 ## Safety boundaries
 
@@ -56,6 +58,8 @@ cd apps/web
 pnpm install
 pnpm dev                         # http://localhost:3000
 ```
+
+**Local models and subscriptions.** Point `LOCAL_LLM_BASE_URL` at any OpenAI-compatible server (Ollama: `http://localhost:11434/v1`) and/or set `CLAUDE_CODE_ENABLED=true` / `CODEX_ENABLED=true` after `claude login` / `codex login` on the API host. Then add models under **Models**, and use **Team setup** on a project to apply a hierarchy (local workers, frontier team leads, a Director) or fine-tune any agent from its card. Subscription CLIs bill the operator's own plan: keep them to self-hosted, single-operator installs.
 
 **No API keys?** The app boots in demo mode: the complete flow with realistic canned agent outputs and zero AI spend. Add a free Gemini key for real model calls, still at no cost. See `docs/ZERO_COST.md`.
 
