@@ -16,7 +16,6 @@ Exit code 1 when band hit rate < --threshold (default 0.7).
 """
 import argparse
 import sys
-import uuid
 from collections import Counter
 from pathlib import Path
 
