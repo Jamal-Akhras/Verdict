@@ -14,22 +14,27 @@ from datetime import timedelta, timezone
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from app.agents.build_agents import DEFS_BY_SLUG, execute_task_def
+from app.agents.build_agents import DEFS_BY_SLUG
 from app.models.agents import Agent, AgentStatus
 from app.models.approvals import ApprovalRequest, ApprovalStatus
 from app.models.ai import CostEvent
 from app.models.base import utcnow
 from app.models.core import ActorType, IdeaSubmission, Project
+from app.models.hierarchy import Flag, FlagStatus
 from app.models.work import Artifact, ReviewStatus, Task, TaskStatus
 from app.providers.router import ModelRouter
 from app.services.agent_lifecycle import transition
 from app.services.audit import record_event
+from app.services.supervision import SupervisionError, run_supervised
 
 logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], Session]
 
 ORPHAN_ERROR = "orphaned by process restart"
+
+# A task is in flight while queued, executing, or under supervisor review.
+INFLIGHT = (TaskStatus.queued, TaskStatus.running, TaskStatus.review)
 
 
 class RunError(Exception):
@@ -56,11 +61,11 @@ def sweep_stale_runs(db: Session, max_age_minutes: int = 30) -> int:
 
     inflight = list(
         db.scalars(
-            select(Task).where(Task.status.in_([TaskStatus.queued, TaskStatus.running]))
+            select(Task).where(Task.status.in_(INFLIGHT))
         )
     )
-    live_projects = {  # projects with a running task that is still fresh
-        t.project_id for t in inflight if t.status == TaskStatus.running and not stale(t)
+    live_projects = {  # projects with an executing task that is still fresh
+        t.project_id for t in inflight if t.status != TaskStatus.queued and not stale(t)
     }
     orphaned: list[Task] = []
     for t in inflight:
@@ -118,7 +123,7 @@ def create_run(db: Session, project: Project) -> list[Task]:
     active = db.scalar(
         select(func.count(Task.id)).where(
             Task.project_id == project.id,
-            Task.status.in_([TaskStatus.queued, TaskStatus.running]),
+            Task.status.in_(INFLIGHT),
         )
     )
     if active:
@@ -158,6 +163,102 @@ def create_run(db: Session, project: Project) -> list[Task]:
         payload={"tasks": [t.title for t in tasks]},
     )
     return tasks
+
+
+class ChangeRequestError(Exception):
+    pass
+
+
+def request_changes(
+    db: Session, request: ApprovalRequest, note: str, *, actor_id: uuid.UUID | None = None
+) -> list[Task]:
+    """The founder's third answer to a desk item, beside approve and reject:
+    "close, but change this". The agent redoes the work with the note as
+    binding directions (through its supervisor, as usual); the new artifact
+    supersedes the old; work that already consumed the old version (e.g.
+    QA's review of the PRD) is queued again. Caller commits and resumes
+    the run. Returns the queued tasks."""
+    if request.status != ApprovalStatus.pending:
+        raise ChangeRequestError("Already resolved")
+    if not (request.blocking and request.subject_type == "artifact"):
+        raise ChangeRequestError("Only work waiting on your sign-off can be sent back")
+    if not note.strip():
+        raise ChangeRequestError("Say what should change")
+    artifact = db.get(Artifact, request.subject_id)
+    task_def = DEFS_BY_SLUG.get(artifact.agent_slug) if artifact else None
+    if artifact is None or task_def is None:
+        raise ChangeRequestError("This work can't be redone automatically")
+    agent = db.get(Agent, artifact.agent_id)
+    if agent.status in (AgentStatus.paused, AgentStatus.archived, AgentStatus.rejected):
+        raise ChangeRequestError(f"{agent.name} is {agent.status.value}; resume it first")
+    redoing = db.scalar(select(Task).where(
+        Task.project_id == request.project_id, Task.agent_slug == agent.slug,
+        Task.status.in_(INFLIGHT),
+    ))
+    if redoing is not None:
+        raise ChangeRequestError(f"{agent.name} is already working on this")
+    if agent.status in (AgentStatus.completed, AgentStatus.blocked):
+        transition(db, agent, AgentStatus.active, actor_type=ActorType.user, actor_id=actor_id,
+                   reason="founder requested changes")
+
+    request.status = ApprovalStatus.revise
+    request.resolution_note = note
+    artifact.review_status = ReviewStatus.superseded.value
+    flag_id = (request.context or {}).get("flag_id")
+    flag = db.get(Flag, uuid.UUID(flag_id)) if flag_id else None
+    if flag is not None:
+        flag.status = FlagStatus.revised
+        flag.resolution = note
+        flag.chain = [*flag.chain, {
+            "agent_id": None, "agent_name": "Founder", "model": "human",
+            "decision": "revise", "rationale": note, "at": utcnow().isoformat(),
+        }]
+
+    original = db.get(Task, artifact.task_id)
+    queued = [Task(
+        project_id=request.project_id, agent_id=agent.id, agent_slug=agent.slug,
+        title=f"{task_def.title} (changes requested)", task_type=task_def.task_type,
+        depends_on=list(original.depends_on) if original else [],
+        founder_feedback=note, revises_artifact_id=artifact.id,
+    )]
+    # Finished work that read the old version must read the new one.
+    seen: set[str] = set()
+    for done in db.scalars(
+        select(Task).where(Task.project_id == request.project_id,
+                           Task.status == TaskStatus.done)
+        .order_by(Task.created_at.desc())
+    ):
+        if agent.slug not in done.depends_on or done.agent_slug in seen:
+            continue
+        seen.add(done.agent_slug)
+        dependent = db.get(Agent, done.agent_id)
+        if dependent.status in (AgentStatus.completed, AgentStatus.blocked):
+            transition(db, dependent, AgentStatus.active, actor_type=ActorType.system,
+                       reason=f"re-review after changes to {agent.name}'s work")
+        queued.append(Task(
+            project_id=request.project_id, agent_id=done.agent_id,
+            agent_slug=done.agent_slug, title=f"{done.title} (new version)",
+            task_type=done.task_type, depends_on=list(done.depends_on),
+        ))
+    db.add_all(queued)
+    db.flush()
+    record_event(
+        db, event_type="approval.revise",
+        summary=f"Changes requested on '{artifact.title}': {note}",
+        actor_type=ActorType.user, actor_id=actor_id, project_id=request.project_id,
+        subject_type="artifact", subject_id=artifact.id,
+        payload={"note": note, "queued": [t.title for t in queued],
+                 "flag_id": flag_id},
+    )
+    return queued
+
+
+def _task_spend(db: Session, task_id: uuid.UUID) -> float:
+    return db.scalar(
+        select(func.coalesce(func.sum(CostEvent.cost_usd), 0.0)).where(
+            CostEvent.task_id == task_id
+        )
+    )
 
 
 def _agent_spend(db: Session, project_id: uuid.UUID, slug: str) -> float:
@@ -271,10 +372,26 @@ def _upstream_context(db: Session, project_id: uuid.UUID, dep_slugs: list) -> st
             .order_by(Artifact.version.desc())
         )
         if artifact:
-            parts.append(fence_team_document(
-                artifact.title, artifact.agent_slug, _render_artifact(artifact.content)
-            ))
+            body = _render_artifact(artifact.content)
+            notes = _resolution_notes(db, artifact.id)
+            if notes:
+                body += f"\n\nBinding guidance from the team's supervisors:\n{notes}"
+            parts.append(fence_team_document(artifact.title, artifact.agent_slug, body))
     return "\n\n".join(parts)
+
+
+def _resolution_notes(db: Session, artifact_id: uuid.UUID) -> str:
+    """Escalations settled inside the hierarchy travel with the artifact, so
+    downstream agents act on the decision instead of re-litigating it."""
+    flags = db.scalars(
+        select(Flag).where(
+            Flag.artifact_id == artifact_id, Flag.status == FlagStatus.resolved
+        ).order_by(Flag.created_at)
+    )
+    return "\n".join(
+        f"- {f.title}: {f.resolution} (decided by {f.chain[-1]['agent_name']})"
+        for f in flags if f.chain
+    )
 
 
 def run_project(
@@ -305,9 +422,7 @@ def run_project(
                 db.rollback()
                 try:
                     task = db.get(Task, task_id)
-                    if task is not None and task.status in (
-                        TaskStatus.queued, TaskStatus.running
-                    ):
+                    if task is not None and task.status in INFLIGHT:
                         task.status = TaskStatus.failed
                         task.error = "unexpected orchestrator error; see server logs"
                         record_event(
@@ -365,17 +480,18 @@ def _next_runnable(db: Session, project_id: uuid.UUID) -> Task | None:
         if not all(slug_done(dep) for dep in t.depends_on):
             continue
         # Approval gates: a non-reviewer task may not start while an upstream
-        # gated artifact is unapproved. Reviewers may read pending artifacts -
-        # their report informs the founder's decision.
+        # artifact awaits the founder - a default gate (PRD, tech plan), a
+        # per-agent override, or an escalation that climbed to the top.
+        # Reviewers may read pending artifacts - their report informs the
+        # founder's decision.
         my_def = DEFS_BY_SLUG.get(t.agent_slug)
         if my_def is not None and not my_def.reviewer:
             gated = False
             for dep in t.depends_on:
-                dep_def = DEFS_BY_SLUG.get(dep)
-                if dep_def is None or not dep_def.requires_approval:
-                    continue
                 artifact = latest_artifact(dep)
-                if artifact is None or artifact.review_status == ReviewStatus.pending_approval:
+                if artifact is None:
+                    continue
+                if artifact.review_status == ReviewStatus.pending_approval:
                     gated = True
                     break
                 if artifact.review_status == ReviewStatus.rejected:
@@ -412,14 +528,21 @@ def _execute_one(db: Session, project_id: uuid.UUID, task_id: uuid.UUID, router:
     )
     db.commit()  # make 'running' visible immediately
 
-    spend_before = _agent_spend(db, project_id, agent.slug)
+    project = db.get(Project, project_id)
     try:
-        output = execute_task_def(
-            db, router, task_def=task_def, project_id=project_id,
+        result = run_supervised(
+            db, router, project=project, task=task, worker=agent, task_def=task_def,
             brief=_brief(db, project_id, task.agent_slug),
             upstream_context=_upstream_context(db, project_id, task.depends_on),
-            max_cost_usd=remaining,
         )
+    except SupervisionError as exc:
+        # Our own message (e.g. a supervisor's budget is spent): safe to show.
+        task.status = TaskStatus.failed
+        task.error = str(exc)
+        task.cost_used_usd = _task_spend(db, task.id)
+        transition(db, agent, AgentStatus.blocked, actor_type=ActorType.system,
+                   reason=f"supervision stopped: {exc}")
+        return
     except Exception as exc:
         # task.error and the transition reason are client-visible (API/UI).
         # Store the exception class only - provider exception text can carry
@@ -429,17 +552,24 @@ def _execute_one(db: Session, project_id: uuid.UUID, task_id: uuid.UUID, router:
         )
         task.status = TaskStatus.failed
         task.error = f"The agent hit an error and stopped. ({type(exc).__name__})"
-        task.cost_used_usd = _agent_spend(db, project_id, agent.slug) - spend_before
+        task.cost_used_usd = _task_spend(db, task.id)
         transition(db, agent, AgentStatus.blocked, actor_type=ActorType.system,
                    reason=f"task failed: {type(exc).__name__}")
         return
 
-    task.cost_used_usd = _agent_spend(db, project_id, agent.slug) - spend_before
+    output = result.output
+    # Whole-task cost: worker drafts plus every review and triage call.
+    task.cost_used_usd = _task_spend(db, task.id)
     last_call = db.scalar(
         select(CostEvent)
-        .where(CostEvent.project_id == project_id, CostEvent.agent_slug == agent.slug)
+        .where(CostEvent.task_id == task.id, CostEvent.call_role == "work")
         .order_by(CostEvent.created_at.desc())
     )
+    requires_approval = (
+        agent.requires_approval if agent.requires_approval is not None
+        else task_def.requires_approval
+    )
+    raised = result.raised_flag
     version = 1 + (
         db.scalar(
             select(func.max(Artifact.version)).where(
@@ -460,17 +590,49 @@ def _execute_one(db: Session, project_id: uuid.UUID, task_id: uuid.UUID, router:
         version=version,
         review_status=(
             ReviewStatus.pending_approval.value
-            if task_def.requires_approval
+            if requires_approval or raised is not None
             else ReviewStatus.unreviewed.value
         ),
         model_used=last_call.model if last_call else "",
         cost_usd=round(task.cost_used_usd, 4),
+        supersedes_id=task.revises_artifact_id,
     )
     db.add(artifact)
     task.status = TaskStatus.done
     db.flush()
+    for flag in db.scalars(select(Flag).where(Flag.task_id == task.id,
+                                              Flag.artifact_id.is_(None))):
+        flag.artifact_id = artifact.id
 
-    if task_def.requires_approval:
+    if raised is not None:
+        # One desk item, not two: the escalation carries the hierarchy's
+        # question and doubles as the approval for a gated artifact.
+        request = ApprovalRequest(
+            project_id=project_id,
+            subject_type="artifact",
+            subject_id=artifact.id,
+            requested_by_slug=agent.slug,
+            title=f"Escalated: {raised.title}"[:255],
+            summary=raised.detail,
+            context={
+                "artifact_type": artifact.artifact_type,
+                "flag_id": str(raised.id),
+                "severity": raised.severity,
+                "chain": raised.chain,
+            },
+            blocking=True,
+        )
+        db.add(request)
+        db.flush()
+        raised.approval_request_id = request.id
+        record_event(
+            db, event_type="approval.requested",
+            summary=f"Escalation reached the founder: '{raised.title}'",
+            actor_type=ActorType.system, project_id=project_id,
+            subject_type="artifact", subject_id=artifact.id,
+            payload={"flag_id": str(raised.id), "hops": len(raised.chain)},
+        )
+    elif requires_approval:
         db.add(ApprovalRequest(
             project_id=project_id,
             subject_type="artifact",
@@ -529,10 +691,12 @@ def _execute_one(db: Session, project_id: uuid.UUID, task_id: uuid.UUID, router:
         )
     record_event(
         db, event_type="task.completed",
-        summary=f"{agent.name} produced '{artifact.title}' (${task.cost_used_usd:.2f})",
+        summary=f"{agent.name} produced '{artifact.title}' (${task.cost_used_usd:.2f}"
+                + (f", {result.attempts} attempts" if result.attempts > 1 else "") + ")",
         actor_type=ActorType.agent, actor_id=agent.id, project_id=project_id,
         subject_type="artifact", subject_id=artifact.id,
-        payload={"artifact_type": artifact.artifact_type, "cost_usd": task.cost_used_usd},
+        payload={"artifact_type": artifact.artifact_type, "cost_usd": task.cost_used_usd,
+                 "attempts": result.attempts},
     )
 
 

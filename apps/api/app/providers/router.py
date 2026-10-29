@@ -11,8 +11,10 @@ import inspect
 import json
 import logging
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import yaml
 from pydantic import BaseModel, ValidationError
@@ -22,6 +24,9 @@ from sqlalchemy.orm import Session
 from app.models.ai import CostEvent, ModelCall
 from app.models.core import Project
 from app.providers.base import ModelProvider, ModelResponse, ProviderError
+
+if TYPE_CHECKING:
+    from app.models.hierarchy import ModelProfile
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -71,21 +76,62 @@ class RoutingError(Exception):
     """No candidate could produce a valid result (or all were priced out)."""
 
 
+@dataclass
+class Candidate:
+    """One model the router may try: a routing-table entry or a pinned profile."""
+
+    model: str
+    provider_name: str
+    provider: ModelProvider | None
+    price_in: float
+    price_out: float
+    profile: str | None = None  # pinned profile name, for the decision log
+
+    def price(self, tokens_in: int, tokens_out: int) -> float:
+        return (tokens_in * self.price_in + tokens_out * self.price_out) / 1_000_000
+
+    def estimate(self, system_prompt: str, user_prompt: str, max_tokens: int) -> float:
+        return self.price((len(system_prompt) + len(user_prompt)) // 4, max_tokens)
+
+
+ProviderFactory = Callable[["ModelProfile"], ModelProvider]
+
+
 class ModelRouter:
-    def __init__(self, providers: dict[str, ModelProvider], routing_path: Path = ROUTING_PATH):
+    def __init__(
+        self,
+        providers: dict[str, ModelProvider],
+        routing_path: Path = ROUTING_PATH,
+        provider_factory: ProviderFactory | None = None,
+    ):
         self.providers = providers
         table = yaml.safe_load(routing_path.read_text())
         self.models: dict[str, dict] = table["models"]
         self.task_types: dict[str, list[str]] = table["task_types"]
         self.risk_rules: dict[str, str] = table.get("risk_rules", {})
+        # Builds providers for pinned model profiles (local, subscription,
+        # or API models the user configured). Injectable for tests.
+        self.provider_factory = provider_factory
 
-    def _price(self, model: str, tokens_in: int, tokens_out: int) -> float:
+    def _table_candidate(self, model: str) -> Candidate:
         m = self.models[model]
-        return (tokens_in * m["price_in"] + tokens_out * m["price_out"]) / 1_000_000
+        return Candidate(
+            model=model, provider_name=m["provider"],
+            provider=self.providers.get(m["provider"]),
+            price_in=m["price_in"], price_out=m["price_out"],
+        )
 
-    def _estimate(self, model: str, system_prompt: str, user_prompt: str, max_tokens: int) -> float:
-        est_in = (len(system_prompt) + len(user_prompt)) // 4
-        return self._price(model, est_in, max_tokens)
+    def _pinned_candidate(self, profile: "ModelProfile") -> Candidate:
+        if self.provider_factory is None:
+            from app.providers.profiles import build_provider
+
+            provider = build_provider(profile)
+        else:
+            provider = self.provider_factory(profile)
+        return Candidate(
+            model=profile.model, provider_name=profile.provider.value, provider=provider,
+            price_in=profile.price_in, price_out=profile.price_out, profile=profile.name,
+        )
 
     def _candidates(self, task_type: str, risk_level: str) -> tuple[list[str], list[dict]]:
         names = self.task_types.get(task_type)
@@ -110,6 +156,7 @@ class ModelRouter:
         db: Session,
         *,
         resp: ModelResponse,
+        candidate: Candidate,
         task_type: str,
         project_id: uuid.UUID | None,
         agent_slug: str | None,
@@ -118,8 +165,10 @@ class ModelRouter:
         schema_name: str | None,
         parse_ok: bool,
         decision: dict[str, Any],
+        task_id: uuid.UUID | None = None,
+        call_role: str = "work",
     ) -> CostEvent:
-        cost = self._price(resp.model, resp.tokens_in, resp.tokens_out)
+        cost = candidate.price(resp.tokens_in, resp.tokens_out)
         event = CostEvent(
             project_id=project_id,
             agent_slug=agent_slug,
@@ -130,6 +179,8 @@ class ModelRouter:
             tokens_out=resp.tokens_out,
             cost_usd=cost,
             latency_ms=resp.latency_ms,
+            task_id=task_id,
+            call_role=call_role,
         )
         db.add(event)
         db.flush()
@@ -169,19 +220,35 @@ class ModelRouter:
         max_tokens: int = 4000,
         project_id: uuid.UUID | None = None,
         agent_slug: str | None = None,
+        pinned: "ModelProfile | None" = None,
+        task_id: uuid.UUID | None = None,
+        call_role: str = "work",
     ) -> T:
-        candidates, rejected = self._candidates(task_type, risk_level)
+        """Route and execute one structured call.
+
+        `pinned` bypasses the routing table: the founder chose this model for
+        the agent, so there is no silent fallback to a paid model if, say, a
+        local server is down - the call fails and the task shows why. Risk
+        policy for pinned models is enforced when the hierarchy is configured
+        (services/hierarchy.py), not here.
+        """
+        if pinned is not None:
+            candidates = [self._pinned_candidate(pinned)]
+            rejected: list[dict] = []
+        else:
+            names, rejected = self._candidates(task_type, risk_level)
+            candidates = [self._table_candidate(n) for n in names]
         attempts: list[dict] = []
         cost_skips = 0
         schema = output_schema.model_json_schema()
 
-        for model_name in candidates:
-            provider_name = self.models[model_name]["provider"]
-            provider = self.providers.get(provider_name)
+        for cand in candidates:
+            model_name = cand.model
+            provider = cand.provider
             if provider is None:
-                attempts.append({"model": model_name, "outcome": f"provider '{provider_name}' not registered"})
+                attempts.append({"model": model_name, "outcome": f"provider '{cand.provider_name}' not registered"})
                 continue
-            est = self._estimate(model_name, system_prompt, user_prompt, max_tokens)
+            est = cand.estimate(system_prompt, user_prompt, max_tokens)
             if est > max_cost_usd:
                 attempts.append({"model": model_name, "outcome": f"skipped: est ${est:.3f} > ceiling"})
                 cost_skips += 1
@@ -197,7 +264,10 @@ class ModelRouter:
                     "rejected_by_risk": rejected,
                     "prior_attempts": list(attempts),
                     "estimated_cost_usd": round(est, 4),
+                    "call_role": call_role,
                 }
+                if cand.profile is not None:
+                    decision["pinned_profile"] = cand.profile
                 extra: dict[str, Any] = {}
                 if _accepts_json_schema(provider):
                     # Native structured outputs where supported; providers
@@ -219,16 +289,20 @@ class ModelRouter:
                 try:
                     parsed = output_schema.model_validate(_extract_json(resp.text))
                     self._log(
-                        db, resp=resp, task_type=task_type, project_id=project_id,
-                        agent_slug=agent_slug, system_prompt=system_prompt, user_prompt=prompt,
+                        db, resp=resp, candidate=cand, task_type=task_type,
+                        project_id=project_id, agent_slug=agent_slug,
+                        system_prompt=system_prompt, user_prompt=prompt,
                         schema_name=output_schema.__name__, parse_ok=True, decision=decision,
+                        task_id=task_id, call_role=call_role,
                     )
                     return parsed
                 except (ValidationError, ValueError) as exc:
                     self._log(
-                        db, resp=resp, task_type=task_type, project_id=project_id,
-                        agent_slug=agent_slug, system_prompt=system_prompt, user_prompt=prompt,
+                        db, resp=resp, candidate=cand, task_type=task_type,
+                        project_id=project_id, agent_slug=agent_slug,
+                        system_prompt=system_prompt, user_prompt=prompt,
                         schema_name=output_schema.__name__, parse_ok=False, decision=decision,
+                        task_id=task_id, call_role=call_role,
                     )
                     attempts.append({"model": model_name, "outcome": f"parse failed ({attempt})"})
                     if attempt == "first":

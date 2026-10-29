@@ -72,3 +72,15 @@ class Agent(PKMixin, TimestampMixin, Base):
     risk_level: Mapped[str] = mapped_column(String(10), default="low")
     budget_max_usd: Mapped[float] = mapped_column(Float, default=1.0)
     created_by: Mapped[str] = mapped_column(String(20), default="system")
+
+    # Hierarchy + per-agent configuration (see models/hierarchy.py).
+    # None = route by task type through routing.yaml (the original behavior).
+    model_profile_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("model_profiles.id"))
+    # Reviews this agent's work and receives its escalations; None = the founder.
+    supervisor_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("agents.id"))
+    # Founder-authored, appended to the system prompt (trusted, not fenced).
+    instructions: Mapped[str] = mapped_column(Text, default="")
+    # Supervisor send-backs allowed before the work must be accepted or escalated.
+    max_revisions: Mapped[int] = mapped_column(Integer, default=2)
+    # None = the task definition's default founder gate (PRD, tech plan).
+    requires_approval: Mapped[bool | None] = mapped_column(default=None)

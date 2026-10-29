@@ -15,4 +15,5 @@ class ProjectOut(BaseModel):
     stage: ProjectStage
     budget_total_usd: float
     budget_used_usd: float
+    instructions: str = ""
     created_at: datetime

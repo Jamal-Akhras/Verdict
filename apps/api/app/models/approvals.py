@@ -14,6 +14,7 @@ class ApprovalStatus(str, enum.Enum):
     pending = "pending"
     approved = "approved"
     denied = "denied"
+    revise = "revise"  # founder requested changes; the work is redone
 
 
 class ApprovalRequest(PKMixin, TimestampMixin, Base):

@@ -12,7 +12,7 @@ from app.schemas.work import ArtifactOut, AuditEventOut, TaskOut
 from app.services.audit import record_event
 from app.services.auth import current_user, owned, owned_project
 from app.services.limits import rate_limit
-from app.services.orchestrator import RunError, create_run, run_project
+from app.services.orchestrator import INFLIGHT, RunError, create_run, run_project
 
 router = APIRouter(tags=["work"])
 
@@ -50,14 +50,14 @@ def reset_run(
     db: Session = Depends(get_db),
     user: User = Depends(current_user),
 ) -> list[Task]:
-    """Escape hatch: force-fail every queued/running task so a stuck run
+    """Escape hatch: force-fail every in-flight task so a stuck run
     can be recreated immediately (no 30-minute sweep wait). Audited."""
     owned_project(db, user, project_id)
     stuck = list(
         db.scalars(
             select(Task).where(
                 Task.project_id == project_id,
-                Task.status.in_([TaskStatus.queued, TaskStatus.running]),
+                Task.status.in_(INFLIGHT),
             )
         )
     )

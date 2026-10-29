@@ -5,7 +5,9 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routes import agents, approvals, costs, health, ideas, projects, public, templates, work
+from app.routes import (
+    agents, approvals, costs, health, hierarchy, ideas, projects, public, templates, work,
+)
 from app.services.auth import require_auth
 
 logging.basicConfig(
@@ -74,3 +76,4 @@ app.include_router(work.router, dependencies=protected)
 app.include_router(approvals.router, dependencies=protected)
 app.include_router(costs.router, dependencies=protected)
 app.include_router(templates.router, dependencies=protected)
+app.include_router(hierarchy.router, dependencies=protected)

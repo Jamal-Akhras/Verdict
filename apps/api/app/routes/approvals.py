@@ -7,13 +7,15 @@ from sqlalchemy.orm import Session
 
 from app.db.session import get_db, get_session_factory
 from app.models.approvals import ApprovalRequest, ApprovalStatus
+from app.models.base import utcnow
 from app.models.core import ActorType, User
+from app.models.hierarchy import Flag, FlagStatus
 from app.models.work import Artifact, ReviewStatus
 from app.providers.router import ModelRouter, get_router
 from app.schemas.work import ApprovalOut
 from app.services.audit import record_event
 from app.services.auth import current_user, owned, owned_project
-from app.services.orchestrator import run_project
+from app.services.orchestrator import ChangeRequestError, request_changes, run_project
 
 router = APIRouter(tags=["approvals"])
 
@@ -59,6 +61,21 @@ def _resolve(
         raise HTTPException(status_code=409, detail="Already resolved")
     request.status = decision
     request.resolution_note = note
+    flag_id = (request.context or {}).get("flag_id")
+    if flag_id:
+        # An escalation that climbed the hierarchy: the founder's answer
+        # closes the flag's chain.
+        flag = db.get(Flag, uuid.UUID(flag_id))
+        if flag is not None:
+            flag.status = (
+                FlagStatus.approved if decision == ApprovalStatus.approved
+                else FlagStatus.denied
+            )
+            flag.resolution = note
+            flag.chain = [*flag.chain, {
+                "agent_id": None, "agent_name": "Founder", "model": "human",
+                "decision": decision.value, "rationale": note, "at": utcnow().isoformat(),
+            }]
     if request.subject_type == "artifact" and request.blocking:
         artifact = db.get(Artifact, request.subject_id)
         if artifact is not None:
@@ -92,6 +109,28 @@ def approve(
     db.commit()
     if request.blocking:
         background.add_task(run_project, request.project_id, model_router, session_factory)
+    return request
+
+
+@router.post("/approvals/{request_id}/revise", response_model=ApprovalOut)
+def request_revision(
+    request_id: uuid.UUID,
+    body: ResolveIn,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    model_router: ModelRouter = Depends(get_router),
+    session_factory=Depends(get_session_factory),
+    user: User = Depends(current_user),
+) -> ApprovalRequest:
+    """Send gated work back with directions instead of approving or
+    rejecting it outright; the run resumes with the agent redoing it."""
+    request = owned(db, user, db.get(ApprovalRequest, request_id), "Approval request")
+    try:
+        request_changes(db, request, body.note, actor_id=user.id)
+    except ChangeRequestError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    db.commit()
+    background.add_task(run_project, request.project_id, model_router, session_factory)
     return request
 
 

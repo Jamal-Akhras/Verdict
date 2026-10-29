@@ -63,6 +63,8 @@ class Project(PKMixin, TimestampMixin, Base):
     )
     budget_total_usd: Mapped[float] = mapped_column(default=0.0)
     budget_used_usd: Mapped[float] = mapped_column(default=0.0)
+    # Founder-authored instructions appended to every agent's system prompt.
+    instructions: Mapped[str] = mapped_column(Text, default="")
 
     user: Mapped["User"] = relationship(back_populates="projects")
     idea_submissions: Mapped[list["IdeaSubmission"]] = relationship(back_populates="project")

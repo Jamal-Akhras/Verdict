@@ -18,7 +18,8 @@ VALID_TRANSITIONS: dict[AgentStatus, set[AgentStatus]] = {
     },
     AgentStatus.paused: {AgentStatus.approved, AgentStatus.active, AgentStatus.archived},
     AgentStatus.blocked: {AgentStatus.active, AgentStatus.archived},
-    AgentStatus.completed: {AgentStatus.archived},
+    # reopened when the founder requests changes to its finished work
+    AgentStatus.completed: {AgentStatus.active, AgentStatus.archived},
     AgentStatus.archived: set(),
     AgentStatus.rejected: set(),
 }

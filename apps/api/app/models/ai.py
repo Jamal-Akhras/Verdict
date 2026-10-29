@@ -56,6 +56,10 @@ class CostEvent(PKMixin, TimestampMixin, Base):
     tokens_out: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    # Trace linkage: which task this call served and in what capacity
+    # (work | review | triage). Null task_id = project-level (intake etc.).
+    task_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("tasks.id"), index=True)
+    call_role: Mapped[str] = mapped_column(String(20), default="work")
 
     model_call: Mapped["ModelCall | None"] = relationship(back_populates="cost_event")
 

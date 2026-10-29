@@ -151,7 +151,30 @@ BACKLOG = {
     "build_sequence_note": "Strict vertical slices: schema, auth, schedule, booking, payments. Payments (T5) is deliberately after booking works with free classes - it isolates Stripe risk from booking-logic risk. T6/T7 can run in parallel after T4/T5.",
 }
 
+SUPERVISOR_REVIEW = {
+    "decision": "accept",
+    "summary": "Draft covers the task requirements and stays inside the approved MVP scope.",
+    "feedback": "",
+    "issues": [
+        {"severity": "low", "issue": "A few estimates are stated without a source", "where": "assumptions"},
+    ],
+    "escalation_title": "",
+    "escalation_detail": "",
+}
+
+ESCALATION_TRIAGE = {
+    "decision": "resolve",
+    "rationale": "The open question is a quality judgement within the approved scope, not a founder decision.",
+    "resolution": "Proceed with the draft as submitted; downstream agents should treat the flagged estimates as assumptions to validate.",
+    "question": "",
+    "severity": "low",
+}
+
+# Supervision markers come first: a supervisor's prompt can mention the
+# worker it reviews, and must still get the supervisor fixture.
 MARKERS = [
+    ("Verdict Supervisor Review", SUPERVISOR_REVIEW),
+    ("Verdict Escalation Triage", ESCALATION_TRIAGE),
     ("Founder Intake Agent", INTAKE),
     ("Feasibility Analyst", FEASIBILITY),
     ("Market Research Agent", RESEARCH),

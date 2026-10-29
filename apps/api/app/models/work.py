@@ -32,6 +32,8 @@ class ReviewStatus(str, enum.Enum):
     pending_approval = "pending_approval"
     approved = "approved"
     rejected = "rejected"
+    # the founder requested changes; a newer version replaces it
+    superseded = "superseded"
 
 
 class Task(PKMixin, TimestampMixin, Base):
@@ -48,6 +50,11 @@ class Task(PKMixin, TimestampMixin, Base):
     depends_on: Mapped[list[Any]] = mapped_column(JSON, default=list)  # agent slugs
     cost_used_usd: Mapped[float] = mapped_column(Float, default=0.0)
     error: Mapped[str] = mapped_column(Text, default="")
+    # Set when this task redoes work the founder sent back: their directions
+    # bind every attempt (including supervisor send-backs), and the new
+    # artifact supersedes the old one.
+    founder_feedback: Mapped[str] = mapped_column(Text, default="")
+    revises_artifact_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("artifacts.id"))
 
 
 class Artifact(PKMixin, TimestampMixin, Base):
