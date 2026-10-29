@@ -58,6 +58,13 @@ export interface ApiAgent {
   cost_used_usd: number;
   created_by: string;
   created_at: string;
+  // hierarchy configuration (null supervisor = reports to the founder,
+  // null model profile = routed by task type)
+  model_profile_id: string | null;
+  supervisor_id: string | null;
+  instructions: string;
+  max_revisions: number;
+  requires_approval: boolean | null;
 }
 
 export interface ApiProject {
@@ -67,7 +74,123 @@ export interface ApiProject {
   stage: string;
   budget_total_usd: number;
   budget_used_usd: number;
+  instructions: string;
   created_at: string;
+}
+
+export type ProviderKind = "anthropic" | "openai" | "gemini" | "local" | "claude_code" | "codex";
+export type ModelTier = "high" | "cheap" | "local";
+
+export interface ModelProfile {
+  id: string;
+  name: string;
+  provider: ProviderKind;
+  access: "api" | "subscription" | "local";
+  model: string;
+  base_url: string;
+  tier: ModelTier;
+  price_in: number;
+  price_out: number;
+  created_at: string;
+}
+
+export interface ModelProfileIn {
+  name: string;
+  provider: ProviderKind;
+  model: string;
+  base_url?: string;
+  tier?: ModelTier;
+  price_in?: number;
+  price_out?: number;
+}
+
+export interface ModelCatalog {
+  demo_mode: boolean;
+  providers: Record<ProviderKind, { enabled: boolean; access: string; reason: string }>;
+  api_models: { model: string; provider: ProviderKind; tier: ModelTier; price_in: number; price_out: number }[];
+  suggested: { name: string; provider: ProviderKind; model: string; tier: ModelTier }[];
+  local_base_url: string;
+}
+
+export interface AgentConfigIn {
+  model_profile_id?: string | null;
+  supervisor_id?: string | null;
+  instructions?: string;
+  max_revisions?: number;
+  requires_approval?: boolean | null;
+}
+
+export interface HierarchyPresetIn {
+  shape: "flat" | "teams";
+  worker_profile_id: string | null;
+  lead_profile_id: string | null;
+  director_profile_id: string | null;
+}
+
+export interface FlagHop {
+  agent_id: string | null;
+  agent_name: string;
+  model: string;
+  decision: string;
+  rationale: string;
+  at: string;
+}
+
+export interface ApiFlag {
+  id: string;
+  task_id: string;
+  artifact_id: string | null;
+  raised_by_agent_id: string;
+  holder_agent_id: string | null;
+  severity: string;
+  title: string;
+  detail: string;
+  status: "open" | "resolved" | "raised" | "approved" | "denied" | "revised";
+  chain: FlagHop[];
+  resolution: string;
+  approval_request_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TraceCall {
+  id: string;
+  task_id: string | null;
+  agent_slug: string | null;
+  call_role: "work" | "review" | "triage" | string;
+  task_type: string;
+  provider: string;
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number;
+  latency_ms: number;
+  created_at: string;
+  system_prompt: string;
+  user_prompt: string;
+  response_text: string;
+  parse_ok: boolean;
+  router_decision: Record<string, unknown>;
+}
+
+export interface TraceReview {
+  id: string;
+  task_id: string;
+  worker_agent_id: string;
+  reviewer_agent_id: string;
+  attempt: number;
+  decision: "accept" | "revise" | "escalate";
+  summary: string;
+  feedback: string;
+  issues: { severity: string; issue: string; where: string }[];
+  reviewed_output: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface Trace {
+  calls: TraceCall[];
+  reviews: TraceReview[];
+  flags: ApiFlag[];
 }
 
 export type Stage = "kill" | "park" | "research" | "validate" | "prototype" | "build";
@@ -126,7 +249,7 @@ export interface ApiApproval {
   summary: string;
   context: Record<string, unknown>;
   blocking: boolean;
-  status: "pending" | "approved" | "denied";
+  status: "pending" | "approved" | "denied" | "revise";
   resolution_note: string;
   created_at: string;
 }
@@ -236,6 +359,11 @@ export const api = {
   listAudit: (projectId: string) => req<ApiAuditEvent[]>(`/projects/${projectId}/audit`),
   listApprovals: (projectId: string, status?: string) =>
     req<ApiApproval[]>(`/projects/${projectId}/approvals${status ? `?status=${status}` : ""}`),
+  requestChanges: (requestId: string, note: string) =>
+    req<ApiApproval>(`/approvals/${requestId}/revise`, {
+      method: "POST",
+      body: JSON.stringify({ note }),
+    }),
   resolveApproval: (requestId: string, decision: "approve" | "deny", note = "") =>
     req<ApiApproval>(`/approvals/${requestId}/${decision}`, {
       method: "POST",
@@ -258,4 +386,53 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  modelCatalog: () => req<ModelCatalog>("/models/catalog"),
+  discoverLocalModels: (baseUrl: string) =>
+    req<{ base_url: string; models: string[] }>(
+      `/models/local?base_url=${encodeURIComponent(baseUrl)}`
+    ),
+  listModelProfiles: () => req<ModelProfile[]>("/model-profiles"),
+  createModelProfile: (body: ModelProfileIn) =>
+    req<ModelProfile>("/model-profiles", { method: "POST", body: JSON.stringify(body) }),
+  updateModelProfile: (profileId: string, body: ModelProfileIn) =>
+    req<ModelProfile>(`/model-profiles/${profileId}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  deleteModelProfile: async (profileId: string) => {
+    const res = await fetch(`${API_URL}/model-profiles/${profileId}`, {
+      method: "DELETE",
+      headers: await authHeader(),
+    });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+  },
+  configureAgent: (agentId: string, body: AgentConfigIn) =>
+    req<ApiAgent>(`/agents/${agentId}/config`, { method: "PATCH", body: JSON.stringify(body) }),
+  configureProject: (projectId: string, instructions: string) =>
+    req<ApiProject>(`/projects/${projectId}/config`, {
+      method: "PATCH",
+      body: JSON.stringify({ instructions }),
+    }),
+  applyHierarchyPreset: (projectId: string, body: HierarchyPresetIn) =>
+    req<ApiAgent[]>(`/projects/${projectId}/hierarchy/preset`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  listFlags: (projectId: string) => req<ApiFlag[]>(`/projects/${projectId}/flags`),
+  trace: (projectId: string, taskId?: string) =>
+    req<Trace>(`/projects/${projectId}/trace${taskId ? `?task_id=${taskId}` : ""}`),
 };
+
+/** FastAPI error bodies look like `422: {"detail": "..."}`; show the detail. */
+export function errorDetail(e: unknown, fallback: string): string {
+  if (!(e instanceof Error)) return fallback;
+  const body = e.message.replace(/^\d+: /, "");
+  try {
+    const detail = JSON.parse(body).detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) return detail.map((d) => d.msg).join("; ");
+  } catch {
+    /* not JSON */
+  }
+  return fallback;
+}

@@ -30,7 +30,15 @@ progressive disclosure — details live in the drawer, not on the canvas.
 - `agents/AgentDrawer` — full agent dossier in the right panel; "Ask why" first action
 - `approvals/NeedsYou` — default right-panel content: "On your desk" decision
   cards (Approve / Request changes / Ask why) + dissent log
-- Right panel is contextual: NeedsYou by default, AgentDrawer when a node is selected
+- `agents/AgentConfig` — "Setup" section inside the drawer: model, reports-to, send-backs,
+  sign-off override, extra instructions
+- `agents/TeamSetup` — right-panel "Team setup": hierarchy preset + instructions for every agent
+- `app/settings/models` — model profiles (local / subscription / API), access chips:
+  local `emerald`, subscription `violet`, API `sky`
+- `app/projects/[id]/trace` — full prompt/review/escalation timeline grouped by task;
+  role chips: draft `stone`, review `sky`, escalation `violet`
+- Right panel is contextual: NeedsYou by default, AgentDrawer when a node is selected,
+  TeamSetup from the header
 
 ## shadcn/ui adoption map (when installed)
 

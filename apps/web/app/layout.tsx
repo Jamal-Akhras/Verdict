@@ -27,6 +27,7 @@ function Shell({ children }: { children: React.ReactNode }) {
             <Link href="/" className="hover:text-stone-900">Dashboard</Link>
             <Link href="/intake" className="hover:text-stone-900">New idea</Link>
             <Link href="/projects/demo" className="hover:text-stone-900">Example project</Link>
+            <Link href="/settings/models" className="hover:text-stone-900">Models</Link>
           </nav>
           <span className="ml-auto flex items-center gap-3">
             <DemoBadge />

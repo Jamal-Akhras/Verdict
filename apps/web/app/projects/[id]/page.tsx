@@ -6,6 +6,8 @@ import { AgentTree } from "@/components/tree/AgentTree";
 import { AgentRoster, RosterTreeToggle } from "@/components/agents/AgentRoster";
 import { AgentDrawer, type AgentAction } from "@/components/agents/AgentDrawer";
 import { AgentBuilder } from "@/components/agents/AgentBuilder";
+import { AgentConfig } from "@/components/agents/AgentConfig";
+import { TeamSetup } from "@/components/agents/TeamSetup";
 import type { TreeAgent } from "@/components/tree/types";
 import { approvalBorder, taskStatusColor } from "@/lib/status";
 import {
@@ -15,16 +17,22 @@ import {
   type ApiArtifact,
   type ApiProject,
   type ApiTask,
+  type FlagHop,
+  type ModelProfile,
 } from "@/lib/api";
 
 const FOUNDER_ID = "founder";
 const FRIENDLY_DOWN =
   "We couldn't reach the workshop. It may be waking up — try again in a minute.";
 
+// Tasks still executing: drafting, or with a supervisor for review.
+const IN_PROGRESS = ["running", "review"];
+
 function toTree(
   agents: ApiAgent[],
   tasks: ApiTask[],
-  artifacts: ApiArtifact[]
+  artifacts: ApiArtifact[],
+  profiles: ModelProfile[]
 ): TreeAgent[] {
   const founder: TreeAgent = {
     id: FOUNDER_ID,
@@ -42,22 +50,24 @@ function toTree(
     founder,
     ...agents.map((a) => {
       const mine = tasks.filter((t) => t.agent_slug === a.slug);
-      const running = mine.find((t) => t.status === "running");
+      const running = mine.find((t) => IN_PROGRESS.includes(t.status));
       const failed = mine.find((t) => t.status === "failed");
+      const profile = profiles.find((p) => p.id === a.model_profile_id);
       return {
         id: a.id,
         slug: a.slug,
         name: a.name,
         initials: a.initials,
         team: a.team,
-        parentId: FOUNDER_ID,
+        parentId: a.supervisor_id ?? FOUNDER_ID,
         status: a.status,
         authority: a.authority,
+        model: profile ? `${profile.name} (${profile.access})` : undefined,
         riskLevel: a.risk_level,
         budgetMaxUsd: a.budget_max_usd,
         costUsedUsd: a.cost_used_usd,
         currentTask: running
-          ? `Working: ${running.title}`
+          ? `${running.status === "review" ? "In review" : "Working"}: ${running.title}`
           : failed
             ? `Failed: ${failed.title}`
             : undefined,
@@ -78,6 +88,10 @@ export default function ProjectPage() {
   const [approvals, setApprovals] = useState<ApiApproval[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [builderOpen, setBuilderOpen] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(false);
+  // desk item being answered with "Request changes", and the draft note
+  const [revising, setRevising] = useState<{ id: string; note: string } | null>(null);
+  const [profiles, setProfiles] = useState<ModelProfile[]>([]);
   const [view, setView] = useState<"roster" | "tree">("roster");
   const [reviewHint, setReviewHint] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -99,6 +113,8 @@ export default function ProjectPage() {
       setArtifacts(ar);
       setApprovals(ap);
       setError(null);
+      // Profiles are user-level config; a failure here must not hide the project.
+      api.listModelProfiles().then(setProfiles).catch(() => setProfiles([]));
       return t;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load project");
@@ -112,7 +128,7 @@ export default function ProjectPage() {
 
   const blockingPending = approvals.some((a) => a.blocking && a.status === "pending");
   const runActive =
-    tasks.some((t) => t.status === "running") ||
+    tasks.some((t) => IN_PROGRESS.includes(t.status)) ||
     (tasks.some((t) => t.status === "queued") && !blockingPending);
   const runPaused = tasks.some((t) => t.status === "queued") && blockingPending;
 
@@ -130,6 +146,12 @@ export default function ProjectPage() {
       pollRef.current = null;
     };
   }, [shouldPoll, refresh]);
+
+  function selectAgent(agentId: string | null) {
+    setSetupOpen(false);
+    setBuilderOpen(false);
+    setSelectedId(agentId);
+  }
 
   async function act(agentId: string, action: AgentAction) {
     setBusy(true);
@@ -160,6 +182,19 @@ export default function ProjectPage() {
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not resolve");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function requestChanges(requestId: string, note: string) {
+    setBusy(true);
+    try {
+      await api.requestChanges(requestId, note);
+      setRevising(null);
+      await refresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not send it back");
     } finally {
       setBusy(false);
     }
@@ -205,7 +240,7 @@ export default function ProjectPage() {
   if (!project)
     return <div className="max-w-2xl mx-auto px-6 py-10 text-sm text-stone-500">Loading…</div>;
 
-  const treeAgents = toTree(agents, tasks, artifacts);
+  const treeAgents = toTree(agents, tasks, artifacts, profiles);
   const selected = treeAgents.find((a) => a.id === selectedId && a.id !== FOUNDER_ID) ?? null;
   const proposed = agents.filter((a) => a.status === "proposed");
   const approved = agents.filter((a) => a.status === "approved");
@@ -219,7 +254,8 @@ export default function ProjectPage() {
   const hasFailures = !runActive && tasks.some((t) => t.status === "failed");
   const runComplete = tasks.length > 0 && tasks.every((t) => t.status === "done");
   const buildPlan = artifacts.find((a) => a.artifact_type === "task_backlog");
-  const panelOpen = builderOpen || selected !== null;
+  const selectedApi = agents.find((a) => a.id === selected?.id) ?? null;
+  const panelOpen = builderOpen || setupOpen || selected !== null;
 
   return (
     <div className="flex h-[calc(100vh-53px)]">
@@ -241,6 +277,24 @@ export default function ProjectPage() {
             </span>
           )}
           <div className="ml-auto flex items-center gap-3">
+            {agents.length > 0 && (
+              <button
+                onClick={() => {
+                  setSelectedId(null);
+                  setBuilderOpen(false);
+                  setSetupOpen(true);
+                }}
+                className="text-xs text-stone-500 hover:text-stone-700"
+              >
+                Team setup
+              </button>
+            )}
+            <Link
+              href={`/projects/${id}/trace`}
+              className="text-xs text-stone-500 hover:text-stone-700"
+            >
+              Trace
+            </Link>
             <Link
               href={`/projects/${id}/activity`}
               className="text-xs text-stone-500 hover:text-stone-700"
@@ -255,9 +309,9 @@ export default function ProjectPage() {
         <div className="flex-1 min-h-0">
           {agents.length > 0 ? (
             view === "roster" ? (
-              <AgentRoster agents={treeAgents} selectedId={selectedId} onSelect={setSelectedId} />
+              <AgentRoster agents={treeAgents} selectedId={selectedId} onSelect={selectAgent} />
             ) : (
-              <AgentTree agents={treeAgents} selectedId={selectedId} onSelect={setSelectedId} />
+              <AgentTree agents={treeAgents} selectedId={selectedId} onSelect={selectAgent} />
             )
           ) : (
             <div className="h-full flex items-center justify-center">
@@ -283,6 +337,7 @@ export default function ProjectPage() {
             <button
               onClick={() => {
                 setBuilderOpen(false);
+                setSetupOpen(false);
                 setSelectedId(null);
               }}
               aria-label="Back to On your desk"
@@ -291,7 +346,9 @@ export default function ProjectPage() {
               ←
             </button>
           )}
-          <span className="text-xs font-semibold text-stone-900">On your desk</span>
+          <span className="text-xs font-semibold text-stone-900">
+            {setupOpen ? "Team setup" : "On your desk"}
+          </span>
           {approvals.length > 0 && (
             <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
               {approvals.length} waiting
@@ -299,7 +356,9 @@ export default function ProjectPage() {
           )}
         </div>
         <div className="min-h-0 flex-1">
-          {builderOpen ? (
+          {setupOpen ? (
+            <TeamSetup project={project} profiles={profiles} onChanged={refresh} />
+          ) : builderOpen ? (
             <AgentBuilder
               projectId={id}
               staffedSlugs={agents
@@ -317,7 +376,17 @@ export default function ProjectPage() {
               busy={busy}
               onClose={() => setSelectedId(null)}
               onAction={(action) => act(selected.id, action)}
-            />
+            >
+              {selectedApi && (
+                <AgentConfig
+                  projectId={id}
+                  agent={selectedApi}
+                  agents={agents}
+                  profiles={profiles}
+                  onSaved={refresh}
+                />
+              )}
+            </AgentDrawer>
           ) : (
             <div className="flex h-full flex-col overflow-y-auto">
               <div className="p-4 border-b border-stone-200 flex items-start justify-between">
@@ -365,6 +434,9 @@ export default function ProjectPage() {
                     <div className="text-xs text-stone-500 mt-1">
                       {ap.requested_by_slug} · {ap.summary || (ap.blocking ? "Blocks downstream work until resolved." : "For your awareness.")}
                     </div>
+                    {Array.isArray(ap.context.chain) && (
+                      <EscalationChain hops={ap.context.chain as FlagHop[]} />
+                    )}
                     <div className="mt-2.5 flex flex-wrap gap-1.5">
                       <button
                         onClick={() => resolveApproval(ap.id, "approve")}
@@ -373,6 +445,18 @@ export default function ProjectPage() {
                       >
                         {ap.blocking ? "Approve" : "Acknowledge"}
                       </button>
+                      {ap.blocking && ap.subject_type === "artifact" && (
+                        <button
+                          onClick={() =>
+                            setRevising(revising?.id === ap.id ? null : { id: ap.id, note: "" })
+                          }
+                          disabled={busy}
+                          aria-expanded={revising?.id === ap.id}
+                          className="rounded-lg border border-stone-300 px-3 py-1.5 text-xs text-stone-600 hover:border-stone-500 disabled:opacity-40"
+                        >
+                          Request changes
+                        </button>
+                      )}
                       {ap.blocking && (
                         <button
                           onClick={() => resolveApproval(ap.id, "deny")}
@@ -391,6 +475,26 @@ export default function ProjectPage() {
                         </Link>
                       )}
                     </div>
+                    {revising?.id === ap.id && (
+                      <div className="mt-2.5 space-y-1.5">
+                        <textarea
+                          value={revising.note}
+                          onChange={(e) => setRevising({ id: ap.id, note: e.target.value })}
+                          rows={3}
+                          autoFocus
+                          aria-label="What should change"
+                          placeholder="What should change? The agent redoes the work with this as binding direction, and its supervisor checks it."
+                          className="w-full resize-y rounded-lg border border-stone-300 bg-white px-2.5 py-1.5 text-xs text-stone-800 focus:border-stone-500 focus:outline-none"
+                        />
+                        <button
+                          onClick={() => requestChanges(ap.id, revising.note)}
+                          disabled={busy || !revising.note.trim()}
+                          className="rounded-lg bg-stone-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-stone-700 disabled:opacity-40"
+                        >
+                          Send back
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
                 {proposed.length > 0 && (
@@ -456,7 +560,7 @@ export default function ProjectPage() {
                       {tasks.map((t) => (
                         <div key={t.id} className="flex items-center justify-between gap-2 text-xs">
                           <span className="flex min-w-0 items-center gap-1.5">
-                            {t.status === "running" && (
+                            {IN_PROGRESS.includes(t.status) && (
                               <span
                                 className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-blue-500"
                                 aria-hidden
@@ -541,5 +645,27 @@ export default function ProjectPage() {
         </div>
       </aside>
     </div>
+  );
+}
+
+/** How an escalation climbed before it reached the founder: each level that
+ *  passed it up, and why. */
+function EscalationChain({ hops }: { hops: FlagHop[] }) {
+  return (
+    <details className="mt-2 text-xs">
+      <summary className="cursor-pointer text-stone-500 hover:text-stone-800">
+        Escalated through {hops.length} level{hops.length === 1 ? "" : "s"}:{" "}
+        {hops.map((h) => h.agent_name).join(" → ")} → You
+      </summary>
+      <ol className="mt-1.5 space-y-1.5 border-l border-stone-200 pl-2.5">
+        {hops.map((h, i) => (
+          <li key={i}>
+            <span className="font-medium text-stone-800">{h.agent_name}</span>{" "}
+            <span className="text-stone-500">({h.model})</span>
+            <p className="text-stone-600">{h.rationale}</p>
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }

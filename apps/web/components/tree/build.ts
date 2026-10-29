@@ -2,7 +2,8 @@ import type { TreeAgent } from "./types";
 
 // Hybrid hierarchy:  You (founder) -> Department -> lead agent -> report agent.
 // Departments come from the agent's `team`; lead->report nesting is defined
-// by slug below. Departments and leads can collapse; when collapsed, their
+// by slug below. Once the founder configures supervisors, the real chain of
+// command (agent.parentId = its supervisor) replaces the departments. Departments and leads can collapse; when collapsed, their
 // descendants' status bubbles up as a summary chip on the folded node.
 
 export type NodeKind = "founder" | "department" | "agent";
@@ -53,6 +54,29 @@ export function buildTree(agents: TreeAgent[]): BuiltTree {
   }
 
   const others = agents.filter((a) => a.id !== rootId);
+
+  // A configured supervision hierarchy wins over department grouping: the
+  // tree then shows who reviews whom and which way escalations climb.
+  const ids = new Set(others.map((a) => a.id));
+  if (others.some((a) => a.parentId !== null && ids.has(a.parentId))) {
+    for (const a of others) {
+      nodes.set(a.id, {
+        id: a.id,
+        kind: "agent",
+        label: a.name,
+        team: a.team,
+        initials: a.initials,
+        agent: a,
+        parentId: a.parentId !== null && ids.has(a.parentId) ? a.parentId : rootId,
+        childIds: [],
+      });
+    }
+    for (const a of others) {
+      const parent = nodes.get(nodes.get(a.id)!.parentId ?? "");
+      if (parent) parent.childIds.push(a.id);
+    }
+    return { nodes, rootId };
+  }
 
   const teams = new Map<string, TreeAgent[]>();
   for (const a of others) {

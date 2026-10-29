@@ -28,11 +28,14 @@ export function AgentDrawer({
   onClose,
   onAction,
   busy,
+  children,
 }: {
   agent: TreeAgent;
   onClose: () => void;
   onAction?: (action: AgentAction) => void;
   busy?: boolean;
+  /** Extra sections (e.g. hierarchy setup) rendered under the summary. */
+  children?: React.ReactNode;
 }) {
   const tc = teamColor(agent.team);
   const actions = actionsByStatus[agent.status] ?? [];
@@ -95,6 +98,8 @@ export function AgentDrawer({
           value={`$${agent.costUsedUsd.toFixed(2)} used of $${agent.budgetMaxUsd.toFixed(2)}`}
         />
       </div>
+
+      {children}
 
       {agent.tasks !== undefined && (
         <Section title="Tasks">
